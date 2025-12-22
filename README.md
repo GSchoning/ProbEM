@@ -126,10 +126,9 @@ This software was developed for the **Queensland Office of Groundwater Impact As
 
 ## Contributors
 
-* **Gerhard Schöning** (Lead Developer) — OGIA
+* **Gerhard Schöning** — OGIA
 * **John Doherty** — Watermark Numerical Computing
-* **Sanjeev Pandey** — OGIA
-* **Anna Bui Xuan Hy** — OGIA
+
 
 ## References
 
