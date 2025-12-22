@@ -1,5 +1,6 @@
 # SigNullEM: Stochastic Airborne Electromagnetic Inversion
-![Uploading Gemini_Generated_Image_i3mcfli3mcfli3mc.png…]()
+<img width="2816" height="1536" alt="Gemini_Generated_Image_i3mcfli3mcfli3mc" src="https://github.com/user-attachments/assets/863f288e-089e-4962-b4a3-a1ed0f234a04" />
+
 
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
