@@ -1,4 +1,4 @@
-# SignalEM: Stochastic Airborne Electromagnetic Inversion
+# SigNullEM: Stochastic Airborne Electromagnetic Inversion
 
 **SignalEM** is a Python-based framework for the inversion of Airborne Electromagnetic (AEM) data. It is built upon the comprehensive simulation and inversion framework provided by **SimPEG** (Heagy et al., 2017) to provide both deterministic and stochastic interpretation of subsurface electrical conductivity.
 
@@ -16,7 +16,7 @@ The core of the repository is the **Randomized Maximum Likelihood (RML)** method
 ## Repository Structure
 
 * `AEM_preproc.py`: Main preprocessing module managing `Survey` and `Data` classes.
-* `ProbEM.py`: Core inversion logic containing the `Sounding`, `Calibration`, and `RML` classes.
+* `SigNullEM.py`: Core inversion logic containing the `Sounding`, `Calibration`, and `RML` classes.
 * `libraries/`:
     * `gex_parser.py`: Parser for SkyTEM system configuration files.
     * `des_parser.py`: Parser for general AEM description files.
@@ -34,7 +34,7 @@ import warnings
 import logging
 
 Survey = AEM_preproc.Survey
-Sounding = ProbEM.Sounding
+Sounding = SignalEM.Sounding
 
 # Initialize Survey (SkyTEM example)
 survey = Survey()
@@ -69,7 +69,7 @@ print("Stochastic inversion completed successfully.")
 ### 1. Layer Probability and Feature Discovery
 Conventional regularized inversions provide Maximum A Posteriori (MAP) estimates of electrical conductivity (EC). While stable, these results often provide "subdued reflections" of conductivity contrasts, making it difficult to recognize offsets in aquitard connectedness.
 
-**ProbEM** employs a feature-seeking methodology based on the Randomized Maximum Likelihood (RML) method. The approach to **uncertainty quantification** implemented here is inspired by the work of **Blatter et al.**, utilizing stochastic ensembles to derive probabilistic descriptors of subsurface structure:
+**SignalEM** employs a feature-seeking methodology based on the Randomized Maximum Likelihood (RML) method. The approach to **uncertainty quantification** implemented here is inspired by the work of **Blatter et al.**, utilizing stochastic ensembles to derive probabilistic descriptors of subsurface structure:
 * **EC Peaks/Troughs:** The ensemble of models is used to calculate the probability of a peak or trough of EC with depth.
 * **Sharpness Filtering:** This acts as a high-amplitude sharpness filter, magnifying sub-horizontal EC contrasts rather than just EC magnitude, rendering features visible even under conductive cover.
 
