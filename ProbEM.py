@@ -1,31 +1,28 @@
-import pandas as pd
-import numpy as np
-import simpeg.electromagnetics.time_domain as tdem
-from simpeg.utils import plot_1d_layer_model
-import discretize
-import tqdm
-from simpeg import maps
-from simpeg.data import Data # Explicitly import Data class
-from simpeg import directives
-from simpeg.data_misfit import L2DataMisfit
-from simpeg import regularization, inverse_problem
-from simpeg import optimization
-from simpeg import inversion
-from simpeg import utils
-from simpeg.utils import mkvc
-import dask
-import sys
-import scipy.stats as stats
-from dask.distributed import Client, progress, LocalCluster, as_completed
-from discretize import TensorMesh
-import os
-import gstools as gs
-from dask.graph_manipulation import bind
 import json
-from scipy.spatial.distance import pdist, squareform
+import os
+import sys
 
+import dask
+import gstools as gs
+import numpy as np
+import pandas as pd
+import scipy.stats as stats
+import simpeg.electromagnetics.time_domain as tdem
+from dask.distributed import Client, LocalCluster
+from discretize import TensorMesh
+from scipy.signal import find_peaks
+from simpeg import (
+    directives,
+    inverse_problem,
+    inversion,
+    maps,
+    optimization,
+    regularization,
+)
+from simpeg.data import Data  # Explicitly import Data class
+from simpeg.data_misfit import L2DataMisfit
 
-cwd = r'\\winhpc\Users\GWater\schoningg\REPOS\AEM_RML'  # os.getcwd()
+cwd = r"\\winhpc\Users\GWater\schoningg\REPOS\AEM_RML"  # os.getcwd()
 
 
 class NoStdStreams(object):
@@ -63,7 +60,6 @@ def fsim(srv, mesh, pars):
     return pred, reg
 
 
-# added 2025-02-05
 def is_scalar(obj):
     if isinstance(obj, np.ndarray):
         return obj.shape == ()  # Empty tuple means scalar
@@ -71,7 +67,6 @@ def is_scalar(obj):
         return np.isscalar(obj)  # Handle other typ
 
 
-# added 2025-02-05
 def get_noise_real(dobs, noise=0.03):
     # 1. Convert dobs_log to normal space
     if is_scalar(noise):
@@ -82,7 +77,9 @@ def get_noise_real(dobs, noise=0.03):
     noise_log = dobs - reals
     return noise_log
 
+
 # --- New DOI Methods ---
+
 
 def get_cutoff(isounding, S, V, kmin=0.0001, kmax=10):
     kmin, kmax = 0.0001, 10  # bounds in S/m
@@ -125,6 +122,7 @@ def get_cutoff(isounding, S, V, kmin=0.0001, kmax=10):
             kt.append(k)
     return int(np.mean(kt))
 
+
 def cdf_for_value(data, x):
     """
     Calculates the empirical CDF for a given value x.
@@ -146,9 +144,10 @@ def cdf_for_value(data, x):
     total_count = len(data_array)
 
     if total_count == 0:
-        return 0.0 # Or raise an error for empty data list
+        return 0.0  # Or raise an error for empty data list
 
     return count / total_count
+
 
 def get_DOI(isounding, Cali, depths=False):
     # Replaced ["ds"] with direct access as getJ returns array in this env
@@ -174,7 +173,12 @@ def get_DOI(isounding, Cali, depths=False):
     nreals = 10000
     for i in range(0, nreals):
         rat = []
-        E = np.array([np.random.normal(0, (np.abs(isounding.dobs[i]) * (isounding.relerr)[i])) for i in range(0, len(isounding.data_object.dobs))])
+        E = np.array(
+            [
+                np.random.normal(0, (np.abs(isounding.dobs[i]) * (isounding.relerr)[i]))
+                for i in range(0, len(isounding.data_object.dobs))
+            ]
+        )
         # E=np.log10(E)
         noise_response = V1 @ S1inv @ U1.T @ E
         for r in range(len(R)):
@@ -191,17 +195,22 @@ def get_DOI(isounding, Cali, depths=False):
     if depths == False:
         cdf_results = [cdf_for_value(DOIi, x) for x in isounding.Depths]
     else:
-        cdf_results = [cdf_for_value(DOIi, x) for x in np.arange(0, np.ceil(isounding.Depths.max()))]
+        cdf_results = [
+            cdf_for_value(DOIi, x)
+            for x in np.arange(0, np.ceil(isounding.Depths.max()))
+        ]
     return cdf_results
+
 
 # -----------------------
 
+
 class Calibration:
     use_weights = False
-    regshema = "SMOOTH"
+    regshema = "WLS"
     useREF = True
 
-    maxIter = 20
+    maxIter = 30
     maxIterLS = 20
     maxIterCG = 10
     tolCG = 1e-3
@@ -210,25 +219,25 @@ class Calibration:
 
     beta0_ratio = 1e1
 
-    max_irls_iterations = 30
+    max_irls_iterations = 50
     minGNiter = 1
-    coolEpsFact = 1.5
+    coolEpsFact = 2
     update_beta = True
     verbose = False
-    Stochastic = False # Added default for Stochastic
+    Stochastic = False  # Added default for Stochastic
 
     def __init__(self):
         pass
 
     def calibrate(self, Sounding, regmodel, cwd=cwd):
-
         sys.path.append(cwd)
-        from libraries import curl
+        # Assuming libraries import handles recursive imports if needed
+        # from libraries import curl
 
         def calfunc(self, Sounding, regmodel):
-            sys.path.append(cwd)
-            from libraries import curl
-            from simpeg.data import Data as SimPEGData # Import simpeg.data.Data inside calfunc to ensure consistency
+            # sys.path.append(cwd)
+            # from libraries import curl
+            # from simpeg.data import Data as SimPEGData
 
             self.regmodel = np.log(regmodel)
             self.inv_thickness = Sounding.inv_thickness
@@ -245,30 +254,32 @@ class Calibration:
             if self.use_weights:
                 self.dmis.W = 1.0 / Sounding.uncertainties
             else:
-                print("no weighting_selected")
+                # print("no weighting_selected")
+                pass
 
             # Define the regularization (model objective function)
             self.reg_map = maps.IdentityMap(nP=Sounding.mesh.nC)
             if self.regshema == "WLS":
                 self.reg = regularization.WeightedLeastSquares(
-                    Sounding.mesh,
-                    mapping=self.reg_map
+                    Sounding.mesh, mapping=self.reg_map, alpha_s=1.0, alpha_x=10
                 )
-                self.reg.reference_model = self.regmodel
+                wx = np.ones(Sounding.mesh.nC)
+                wx[0:3] = 5.0
+                self.reg.objfcts[1].set_weights(surface_lock=wx)
+
             elif self.regshema == "SPARSE":
                 self.reg = regularization.Sparse(Sounding.mesh, mapping=self.reg_map)
                 self.reg.reference_model = self.regmodel
-                self.p = 0.0
-                self.q = 0.0
+                self.p = 2
+                self.q = 1
                 self.reg.norms = [self.p, self.q]
             elif self.regshema == "SMOOTH":
                 self.reg = regularization.SmoothnessFirstOrder(
                     Sounding.mesh,
                     mapping=self.reg_map,
                     orientation="x",
-                    reference_model_in_smooth=self.useREF,
                 )
-
+            self.reg.reference_model = self.regmodel
             self.reg.reference_model_in_smooth = self.useREF
 
             # Define how the optimization problem is solved. Here we will use an inexact
@@ -283,15 +294,16 @@ class Calibration:
                 upper=np.log(self.upper),
             )
 
-            # self.opt = optimization.InexactGaussNewton(
-            # maxIter=self.maxIter, maxIterLS=self.maxIterLS, maxIterCG=self.maxCG, tolCG=self.tolCG
-            # )
             # Define the inverse problem
-            self.inv_prob = inverse_problem.BaseInvProblem(self.dmis, self.reg, self.opt)
+            self.inv_prob = inverse_problem.BaseInvProblem(
+                self.dmis, self.reg, self.opt
+            )
 
             # Defining a starting value for the trade-off parameter (beta) between the data
             # misfit and the regularization.
-            self.starting_beta = directives.BetaEstimate_ByEig(beta0_ratio=self.beta0_ratio)
+            self.starting_beta = directives.BetaEstimate_ByEig(
+                beta0_ratio=self.beta0_ratio
+            )
 
             # Update the preconditionner
             self.update_Jacobi = directives.UpdatePreconditioner()
@@ -300,24 +312,38 @@ class Calibration:
             self.save_iteration = directives.SaveOutputEveryIteration(save_txt=False)
 
             # Directives for the IRLS
-            self.update_IRLS = directives.UpdateIRLS( # Corrected from Update_IRLS to UpdateIRLS
+            self.update_IRLS = directives.UpdateIRLS(
                 max_irls_iterations=self.max_irls_iterations,
-                # minGNiter=self.minGNiter, # Removed minGNiter as it's not a recognized parameter
-                # coolEpsFact=self.coolEpsFact, # Removed coolEpsFact as it's not a recognized parameter
-                # update_beta=self.update_beta, # Removed update_beta as it's not a recognized parameter
             )
 
             # Add sensitivity weights
             self.sensitivity_weights = directives.UpdateSensitivityWeights()
 
+            # 2. Cool Beta (Reduce regularization over time)
+            self.beta_schedule = directives.BetaSchedule(
+                coolingFactor=self.coolEpsFact, coolingRate=1
+            )  # Cool every iteration)
+
+            self.target_misfit = directives.TargetMisfit(chifact=1.0)
+
             # The directives are defined as a list.
-            self.directives_list = [
-                self.sensitivity_weights,
-                self.starting_beta,
-                self.save_iteration,
-                self.update_IRLS,
-                self.update_Jacobi,
-            ]
+            if self.regshema == "SPARSE":
+                self.directives_list = [
+                    self.sensitivity_weights,
+                    self.starting_beta,
+                    self.save_iteration,
+                    self.update_IRLS,
+                    self.update_Jacobi,
+                ]
+            else:
+                self.directives_list = [
+                    self.sensitivity_weights,
+                    self.starting_beta,
+                    self.beta_schedule,  # Replaces IRLS cooling
+                    self.target_misfit,  # Stops the inversion
+                    self.save_iteration,
+                    self.update_Jacobi,
+                ]
 
             self.inv = inversion.BaseInversion(self.inv_prob, self.directives_list)
 
@@ -337,7 +363,9 @@ class Calibration:
                     / (Sounding.tx_area * Sounding.uncertainties) ** 2
                 )
             )
-            self.rele = np.mean(np.abs((Sounding.dobs - self.pred.dclean) / Sounding.dobs))
+            self.rele = np.mean(
+                np.abs((Sounding.dobs - self.pred.dclean) / Sounding.dobs)
+            )
             self.DOI = get_DOI(isounding=Sounding, Cali=self)
 
         if self.verbose:
@@ -347,73 +375,16 @@ class Calibration:
             with NoStdStreams():
                 calfunc(self, Sounding, regmodel)
 
-        if self.Stochastic:
-            # return self.values, self.rele, self.pred
-            # added 2025-02-05
-            return {
-                "values": self.values,
-                "rele": self.rele,
-                "pred": self.pred,
-                "DOI": self.DOI,
-            }
-        else: # Added for deterministic inversion
-            return {
-                "values": self.values,
-                "rele": self.rele,
-                "pred": self.pred,
-                "DOI": self.DOI,
-            }
+        return {
+            "values": self.values,
+            "rele": self.rele,
+            "pred": self.pred,
+            "DOI": self.DOI,
+        }
 
 
 class Sounding:
-    """Sounding class
-
-    Parameters
-    ----------
-
-    Survey: AEM_preproc.Survey() class
-        ABC
-    iline: int
-        Flight line number.
-    time: int, float or str.
-        Time of the sounding (within the flight line).
-    inv_thickness:  float array, 1D.
-        Arbitrary thicknesses to be used for the inversion.
-
-    Attributes
-    ----------
-
-    station_data: pandas.DataFrame
-        Pandas dataframe of only one row, containing the station data for the current line + time.
-    UTMX:
-        X coord of the sounding.
-    UTMY:
-        Y coord of the sounding.
-    TX_ALTITUDE:
-        Altitude of the transmitter.
-    RX_ALTITUDE:
-        Altitude of the receiver.
-    station_lm_data:
-        ABC
-    station_hm_data:
-        ABC
-    station_lm_std:
-        ABC
-    station_hm_std:
-        ABC
-
-
-
-    Methods
-    -------
-    __init__(fish):
-        Constructor, fish is a str which self.bar will be set to.
-    Calibrate(self, regmodel):
-        ABC
-    def get_RML_reals(self, nreals, Lrange=50, ival=0.01, lower=0.001, upper=10, tpw=1, memlim="4GB"):
-        ABC
-
-    """
+    """Sounding class"""
 
     def __init__(self, Survey, iline, time, inv_thickness, use_relerr=True, unc=None):
         self.iline = iline
@@ -425,8 +396,17 @@ class Sounding:
         ]
         self.use_relerr = use_relerr
         self.unc = unc
-        self.runc_offset = Survey.Data.runc_offset
 
+        # Pull global settings from Survey.Data if available
+        # Default to 0.03 if not found to prevent crashes
+        try:
+            self.runc_offset = Survey.Data.runc_offset
+        except AttributeError:
+            self.runc_offset = 0.03
+
+        # ------------------------------------------------------------------
+        # 1. LOAD STATION DATA
+        # ------------------------------------------------------------------
         self.station_data = Survey.Data.station_data[
             Survey.Data.station_data.index == (iline, time)
         ]
@@ -436,6 +416,7 @@ class Sounding:
         self.TX_ALTITUDE = self.station_data.TX_ALTITUDE.values[0]
         self.RX_ALTITUDE = self.station_data.RX_ALTITUDE.values[0]
 
+        # Load Data Arrays (Already trimmed by AEM_preproc)
         self.station_lm_data = Survey.Data.lm_data[
             Survey.Data.lm_data.index == (iline, time)
         ].to_numpy(dtype=float)[0]
@@ -450,59 +431,80 @@ class Sounding:
             Survey.Data.hm_std.index == (iline, time)
         ].to_numpy(dtype=float)[0]
 
+        # ------------------------------------------------------------------
+        # 2. DEFINE SYSTEM GEOMETRY
+        # ------------------------------------------------------------------
         self.tx_loc = Survey.tx_shape + [self.UTMX, self.UTMY, self.TX_ALTITUDE]
         self.rx_loc = Survey.rx_offset + [self.UTMX, self.UTMY, self.RX_ALTITUDE]
         self.tx_area = Survey.tx_area
 
-        # Low moment souurce
+        # Low moment source
         rx_lm = tdem.receivers.PointMagneticFluxTimeDerivative(
             self.rx_loc, Survey.lm_times, orientation="z"
         )
-
         lm_wave = tdem.sources.PiecewiseLinearWaveform(
             Survey.lm_wave_time, Survey.lm_wave_form
         )
         src_lm = tdem.sources.LineCurrent(rx_lm, self.tx_loc, waveform=lm_wave)
 
-        # high moment source
-        rx_hm = tdem.receivers.PointMagneticFluxTimeDerivative( # Corrected typo here
+        # High moment source
+        rx_hm = tdem.receivers.PointMagneticFluxTimeDerivative(
             self.rx_loc, Survey.hm_times, orientation="z"
         )
-
         hm_wave = tdem.sources.PiecewiseLinearWaveform(
             Survey.hm_wave_time, Survey.hm_wave_form
         )
         src_hm = tdem.sources.LineCurrent(rx_hm, self.tx_loc, waveform=hm_wave)
 
-        # Survey
+        # ------------------------------------------------------------------
+        # 3. CONSOLIDATE DATA & CALCULATE ROBUST UNCERTAINTIES
+        # ------------------------------------------------------------------
         self.srv = tdem.Survey([src_lm, src_hm])
-        # Corrected: self.station_lm_data and self.station_hm_data already contain the actual response
         self.dobs = np.r_[self.station_lm_data, self.station_hm_data]
         self.times = np.r_[Survey.lm_times, Survey.hm_times]
-        # Corrected: self.station_lm_std and self.station_hm_std already contain the actual standard deviation
-        self.uncertainties = np.r_[self.station_lm_std, self.station_hm_std]
 
-        # Use runc_offset directly as the relative error, ensuring it's positive
-        self.relerr = np.ones_like(self.dobs) * self.runc_offset
+        # A. Start with Relative Error + Noise Floor
+        #    Note: 1e-15 is good for synthetics. Consider 1e-14 for field data.
+        noise_floor = 1e-15
 
-        if (self.use_relerr) & (self.unc != None):
+        # If user supplied a specific uncertainty override (unc), use it.
+        # Otherwise use the data-derived relative error + floor.
+        if (self.use_relerr) & (self.unc is not None):
             self.relerr = np.array([self.unc for i in self.dobs])
-            # If unc is provided, uncertainties are re-calculated based on absolute dobs and unc
-            # Corrected: Base uncertainty on self.dobs (which is now correctly scaled) and unc
             self.uncertainties = np.abs(self.dobs) * self.unc
-
-        # Define the data object
-        if self.use_relerr:
-            self.data_object = Data(
-                self.srv, dobs=self.dobs, relative_error=self.relerr
-            )
         else:
-            self.data_object = Data(
-                self.srv, dobs=self.dobs, standard_deviation=self.uncertainties
+            self.relerr = np.ones_like(self.dobs) * self.runc_offset
+            self.uncertainties = np.sqrt(
+                (self.dobs * self.runc_offset) ** 2 + noise_floor**2
             )
 
-        # Define a mesh for plotting and regularization.
-        self.mesh = TensorMesh([(np.r_[self.inv_thickness, self.inv_thickness[-1]])], "0")
+        # B. APPLY SKYTEM RAMP SAFETY FACTOR (The Artifact Fix)
+        #    De-weight the first 4 VALID gates of the Low Moment to suppress ramp artifacts.
+        #    Since pre-proc removes garbage gates, index 0 is actually Gate 8 (First valid).
+        safety_factor = np.ones_like(self.uncertainties)
+
+        # Apply 3x penalty to the first 4 gates
+        safety_factor[0:1] = 3.0
+
+        # Multiply uncertainties by this safety mask
+        self.uncertainties = self.uncertainties * safety_factor
+
+        # ------------------------------------------------------------------
+        # 4. INITIALIZE SIMPEG DATA OBJECT (CRITICAL FIX)
+        # ------------------------------------------------------------------
+        # We MUST use standard_deviation=self.uncertainties.
+        # If we used relative_error=..., SimPEG would ignore our floor and safety factor.
+
+        self.data_object = Data(
+            self.srv, dobs=self.dobs, standard_deviation=self.uncertainties
+        )
+
+        # ------------------------------------------------------------------
+        # 5. INITIALIZE MESH & SIMULATION
+        # ------------------------------------------------------------------
+        self.mesh = TensorMesh(
+            [(np.r_[self.inv_thickness, self.inv_thickness[-1]])], "0"
+        )
         self.model_mapping = maps.ExpMap(nP=self.mesh.nC)
 
         self.simulation = tdem.Simulation1DLayered(
@@ -519,11 +521,9 @@ class Sounding:
         self.RML = RML(
             Lrange=Lrange, ival=ival, lower=lower, upper=upper, tpw=tpw, memlim=memlim
         )
-        self.RML.get_prior_reals_VAR(self, nreals)
+        self.RML.get_prior_reals_CONV(self, nreals)
 
-        self.RML.get_perturbed_data(
-            self, nreals
-        )  # generate_decreasing_samples(self, nreals) #this is the decreasing samples
+        self.RML.get_perturbed_data(self, nreals)
         self.RML.prep_parruns(self, nreals)
 
 
@@ -536,39 +536,188 @@ class RML:
         self.tpw = tpw
         self.memlim = memlim
 
-    def get_prior_reals_VAR(self, Sounding, nreals):
+    def get_prior_reals_CONV(self, Sounding, nreals):
+        """
+        Generates 'Background + Anomalies' priors using Matrix Convolution.
+        Produces peaks/troughs oscillating around a fixed background (ival).
+        """
+        # 1. Grab Depths
+        self.Depths = Sounding.Depths
         self.nreals = nreals
-        self.var = ((np.log10(self.lower * 10) - np.log10(self.upper / 10)) / 4) ** 2
-        self.model = gs.Gaussian(
-            dim=1, var=self.var, len_scale=self.Lrange, mean=np.log10(self.ival)
-        )
-        x = np.r_[
-            Sounding.inv_thickness.cumsum(),
-            [Sounding.inv_thickness.cumsum()[-1] + Sounding.inv_thickness[-1]],
-        ]
 
-        self.Depths = x
+        # 2. Setup Geometry (Layer Midpoints)
+        z_bot = Sounding.inv_thickness.cumsum()
+        z_top = np.r_[0, z_bot[:-1]]
+        z_mid = (z_top + z_bot) / 2.0
 
-        self.srf = gs.SRF(self.model, mean=np.log10(self.ival))
-        self.srf(x, mesh_type="unstructured")
+        # Fix dimensions for SimPEG (30 cells)
+        n_cells = Sounding.mesh.nC
+        if len(z_mid) == n_cells - 1:
+            z_mid = np.r_[z_mid, z_bot[-1] + 50.0]
+        if len(z_mid) != n_cells:
+            z_mid = np.linspace(0, z_bot[-1] + 100, n_cells)
+
+        # --- 3. DEFINE FEATURE WIDTH (Correlation Length) ---
+        # To avoid trends, these numbers must be significantly smaller than total depth.
+        # 10m at surface -> 40m at depth creates distinct "layers" rather than a drift.
+        L_surface = 30.0
+        L_bottom = 80.0
+
+        length_scales = np.interp(z_mid, [0, 250], [L_surface, L_bottom])
+
+        # --- 4. BUILD CORRELATION MATRIX (Exponential Kernel) ---
+        # Exponential (blockier) vs Gaussian (smoother).
+        # Exponential is often better for "peaks and troughs".
+        nC = len(z_mid)
+        C = np.eye(nC)
+
+        for i in range(nC):
+            for j in range(nC):
+                if i == j:
+                    continue
+                dist = abs(z_mid[i] - z_mid[j])
+                L_local = (length_scales[i] + length_scales[j]) / 2.0
+
+                # Exponential Kernel: exp( - distance / length )
+                # Produces "rougher" layers (Markov process)
+                C[i, j] = np.exp(-1.0 * (dist / L_local))
+
+        # --- 5. CHOLESKY DECOMPOSITION ---
+        # Add jitter for stability
+        C += np.eye(nC) * 1e-6
+        try:
+            L_mat = np.linalg.cholesky(C)
+        except np.linalg.LinAlgError:
+            U, S, Vt = np.linalg.svd(C)
+            L_mat = U @ np.diag(np.sqrt(S))
+
+        # --- 6. GENERATE ---
+        # Calculate Log-Space Statistics
+        log_lower = np.log10(self.lower)
+        log_upper = np.log10(self.upper)
+        var_log = ((log_upper - log_lower) / 6.0) ** 2
+        std_log = np.sqrt(var_log)
+
+        # Center the mean exactly on your background (ival)
+        # We assume the output of the convolution is mean=0, so we just add log(ival)
+        log_background = np.log10(self.ival)
+
+        self.fields = []
+        MIN_LOG_COND = -4.0
+        MAX_LOG_COND = 0.5
+
+        for _ in range(self.nreals):
+            # Generate Fluctuations
+            white_noise = np.random.randn(nC)
+            fluctuations = L_mat @ white_noise
+
+            # Combine: Background + (Fluctuation * Magnitude)
+            log_model = log_background + (fluctuations * std_log)
+
+            # Clip and Convert to Linear S/m
+            self.fields.append(10 ** (np.clip(log_model, MIN_LOG_COND, MAX_LOG_COND)))
+
+        self.prior_matrix = np.array(self.fields)
+
+    def get_prior_reals_VAR(self, Sounding, nreals):
+        """
+        Generates 1D non-stationary prior realizations using gstools.
+        Automatically handles the 'Infinite Basement' dimension mismatch.
+        """
+        # --- CRITICAL FIX: Grab Depths from Sounding ---
+        self.Depths = Sounding.Depths
+        # -----------------------------------------------
+
+        self.nreals = nreals
+
+        # --- 1. SETUP VARIANCE & MODEL ---
+        log_lower = np.log10(self.lower)
+        log_upper = np.log10(self.upper)
+        self.var = ((log_upper - log_lower) / 4.0) ** 2
+
+        # Mean correction for Log-Normal bias
+        correction_factor = 0.5 * self.var * np.log(10)
+        corrected_log_mean = np.log10(self.ival) - correction_factor
+
+        # Log-Space Length Scale (0.3 ~ doubling of thickness correlation)
+        log_Lrange = 0.15
+        self.model = gs.Gaussian(dim=1, var=self.var, len_scale=log_Lrange)
+
+        # --- 2. FIX COORDINATES ---
+        # Target: We need exactly Sounding.mesh.nC points (e.g., 30)
+        n_cells = Sounding.mesh.nC
+
+        # Calculate finite layer bottoms
+        z_bot = Sounding.inv_thickness.cumsum()  # shape (29,)
+        z_top = np.r_[0, z_bot[:-1]]  # shape (29,)
+        z_mid = (z_top + z_bot) / 2.0  # shape (29,)
+
+        # Check if we are missing the basement point
+        if len(z_mid) == n_cells - 1:
+            # Create a midpoint for the 30th (infinite) layer
+            # We just place it 50m below the last finite layer
+            basement_depth = z_bot[-1] + 50.0
+            z_mid = np.r_[z_mid, basement_depth]
+
+        # Ensure shapes match now
+        if len(z_mid) != n_cells:
+            # Fallback for weird meshes: just linspace it
+            print(
+                f"Warning: Mesh cells ({n_cells}) != Depth points ({len(z_mid)}). Resizing..."
+            )
+            z_mid = np.linspace(0, z_bot[-1] + 100, n_cells)
+
+        # Apply Log-Depth Scaling
+        shift_factor = 60.0
+        z_log_coords = np.log10(z_mid + shift_factor)
+
+        # --- 3. GENERATE ---
+        self.srf = gs.SRF(self.model, mean=corrected_log_mean)
         self.seeds = np.random.randint(low=1, high=11111111, size=self.nreals)
         self.fields = []
+
+        # Safety Limits (Log10 S/m)
+        MIN_LOG_COND = -4.0
+        MAX_LOG_COND = 0.5
+
         for seed in self.seeds:
-            seed = gs.random.MasterRNG(seed)
-            field = self.srf(seed=seed())
-            self.fields.append(10**field)
+            seed_rng = gs.random.MasterRNG(seed)
+
+            # Generate exactly n_cells points
+            raw_log_field = self.srf(
+                z_log_coords, mesh_type="unstructured", seed=seed_rng()
+            )
+
+            # Clip and Save
+            self.fields.append(
+                10 ** (np.clip(raw_log_field, MIN_LOG_COND, MAX_LOG_COND))
+            )
+
+        # Shape should now be (n_reals, 30) -> Fits SimPEG perfectly
+        self.prior_matrix = np.array(self.fields)
 
     def get_perturbed_data(self, Sounding, nreals):
         pobs = []
         for index in range(len(Sounding.dobs)):
             obs = Sounding.dobs[index]
-            std = np.abs(obs) * Sounding.relerr[index]  # Sounding.uncertainties[index]
+
+            # OLD: std = np.abs(obs) * Sounding.relerr[index] (Ignores floor/safety)
+
+            # NEW: Use the robust uncertainty from the Sounding
+            std = Sounding.uncertainties[index]
+
+            # Perturb
             obsreals = np.random.normal(obs, std, nreals)
-            obsreals = np.abs(obsreals) * -1
+
+            # Ensure negative sign (for AEM magnitude) if needed,
+            # though usually it's better to perturb the raw value.
+            # If your obs are negative, this is fine:
+            # obsreals = -1 * np.abs(obsreals) # Only if you need to enforce sign
 
             pobs.append(obsreals)
+
         self.pobs = np.array(pobs).T
-        return pobs
+        return self.pobs
 
     def generate_decreasing_samples(self, Sounding, nreals):
         """Generates random samples with a decreasing trend, handling edge cases."""
@@ -589,7 +738,9 @@ class RML:
                 upper_bound = samples[i, j - 1]
 
                 # Robust lower bound calculation (avoiding potential domain errors)
-                lower_bound = stats.norm.ppf(0.0001, loc=observations[j], scale=std_devs[j])
+                lower_bound = stats.norm.ppf(
+                    0.0001, loc=observations[j], scale=std_devs[j]
+                )
 
                 # Ensure lower_bound is strictly less than upper_bound
                 lower_bound = min(lower_bound, upper_bound - 1e-9)  # A small tolerance
@@ -610,7 +761,7 @@ class RML:
             Cbi = Calibration()
             Cbi.lower = self.lower
             Cbi.upper = self.upper
-            Cbi.regshema = "SMOOTH"
+            Cbi.regshema = "WLS"
             Cbi.Stochastic = True
             real = self.fields[i]
             pert_obs = self.pobs[i]
@@ -620,19 +771,51 @@ class RML:
             lazy_result = dask.delayed(Cbi.calibrate)(Sounding, real)
             self.lazy_results.append(lazy_result)
 
+    def calc_feature_probs(self):
+        nreals = len(self.calreals)
+        n_depths = len(self.Depths)
+
+        peak_counts = np.zeros(n_depths)
+        trough_counts = np.zeros(n_depths)
+
+        # PROMINENCE: 0.1 log-units (approx 25% contrast)
+        # WIDTH: 2 cells (ignores single-point spikes)
+        MIN_PROMINENCE = 0.05
+        MIN_WIDTH = 2
+
+        for real in self.calreals:
+            # Convert to Log10 for consistent scale
+            log_real = np.log10(real + 1e-10)  # epsilon to avoid log(0)
+
+            # Find Peaks (Conductive Layers)
+            idx_peaks, _ = find_peaks(
+                log_real, prominence=MIN_PROMINENCE, width=MIN_WIDTH
+            )
+            peak_counts[idx_peaks] += 1
+
+            # Find Troughs (Resistive Layers) -> Peaks of the negative signal
+            idx_troughs, _ = find_peaks(
+                -log_real, prominence=MIN_PROMINENCE, width=MIN_WIDTH
+            )
+            trough_counts[idx_troughs] += 1
+
+        self.pprob = peak_counts / nreals
+        self.trough_prob = trough_counts / nreals
+
     def run_local(self, cluster=None, client=None):
         self.ncores = int(os.cpu_count()) - 1
 
         if (cluster is None) and (client is None):
             self.closeflag = True
             cluster = LocalCluster(
-                threads_per_worker=self.tpw, n_workers=self.ncores, memory_limit=self.memlim
+                threads_per_worker=self.tpw,
+                n_workers=self.ncores,
+                memory_limit=self.memlim,
             )
         else:
             self.closeflag = False
 
         if client is not None:
-
             self.dashboard_link = client.dashboard_link
             print(self.dashboard_link)
             sys.stdout.flush()
@@ -684,11 +867,37 @@ class RML:
             for real in self.calreals
         ]
 
-        self.p50 = np.quantile(self.calreals, 0.5, axis=0)
-        self.p5 = np.quantile(self.calreals, 0.05, axis=0)
-        self.p95 = np.quantile(self.calreals, 0.95, axis=0)
-        self.pprob = np.sum(peaks, axis=0) / len(peaks)
-        self.tprob = np.sum(troughs, axis=0) / len(peaks)
+        log_reals = np.log10(np.array(self.calreals) + 1e-12)
+
+        # 2. Calculate Percentiles in Log Space
+        log_p50 = np.quantile(log_reals, 0.5, axis=0)
+        log_p5 = np.quantile(log_reals, 0.05, axis=0)
+        log_p95 = np.quantile(log_reals, 0.95, axis=0)
+
+        # 3. Convert back to Linear Space (S/m)
+        self.p50 = 10**log_p50
+        self.p5 = 10**log_p5
+        self.p95 = 10**log_p95
+        # self.pprob = np.sum(peaks, axis=0) / len(peaks)
+        # self.tprob = np.sum(troughs, axis=0) / len(peaks)
+
+        # --- NEW: Gradient Probability Logic ---
+        nreals = len(self.calreals)
+
+        self.calc_feature_probs()
+
+        # Now calculating indices is safe because pprob exists
+        dif_1 = [np.gradient(r, self.Depths) for r in self.calreals]
+        self.ri_prob = np.sum([d > 0 for d in dif_1], axis=0) / self.nreals
+        self.fa_prob = np.sum([d < 0 for d in dif_1], axis=0) / self.nreals
+
+        # Recalculate your Master Index with the new robust peaks
+        self.layer_index = self.ri_prob + self.pprob - self.fa_prob
+        self.polarity_index = self.ri_prob - self.fa_prob
+        # Combined Layer Probability (Directional Contrast)
+        self.layprob = np.where(
+            self.ri_prob > self.fa_prob, self.ri_prob, self.fa_prob * -1
+        )
 
         try:
             # Handle scalar DOIs
@@ -706,7 +915,7 @@ class RML:
             self.DOI_std = np.std(self.DOIs, axis=0)
             self.cdf = self.DOI_mean
             self.pdf = np.diff(self.cdf, prepend=0)
-            self.count = np.zeros_like(self.cdf) # Placeholder
+            self.count = np.zeros_like(self.cdf)  # Placeholder
 
 
 def adjust_dtype(var):
@@ -717,7 +926,6 @@ def adjust_dtype(var):
 
 
 def proc_output(out, fd_output_sounding):
-
     fi_out_rml_tpl = r"{}\rml.gz.parquet"
     fi_out_obs_tpl = r"{}\obs.gz.parquet"
     fi_out_preds_tpl = r"{}\preds.gz.parquet"
@@ -733,6 +941,11 @@ def proc_output(out, fd_output_sounding):
             "p95": isounding.RML.p95[:-1],
             "pprob": isounding.RML.pprob[:-1],
             "tprob": isounding.RML.tprob[:-1],
+            # --- Added New Probability Columns ---
+            "ri_prob": isounding.RML.ri_prob[:-1],
+            "fa_prob": isounding.RML.fa_prob[:-1],
+            "layprob": isounding.RML.layprob[:-1],
+            # -------------------------------------
             "doicdf": isounding.RML.cdf,
         }
     )
